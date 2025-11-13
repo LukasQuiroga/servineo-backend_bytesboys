@@ -1,15 +1,4 @@
-import Server from './config/server.config';
-
-import { SERVER_PORT } from './config/env.config';
-
-async function startServer() {
-  try {
-    Server.listen(SERVER_PORT, () => {
-      console.info(`Server running on http://localhost:${SERVER_PORT}`);
-    });
-  } catch (error) {
-    console.error('Error starting server', error);
-  }
-}
-
-startServer();
+// src/index.ts
+// This file is deprecated. Use src/server.ts instead.
+// Kept for backwards compatibility during migration.
+import './server';
