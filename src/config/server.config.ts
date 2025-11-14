@@ -1,5 +1,10 @@
-// This file is deprecated. Use src/app.ts instead.
-// Kept for backwards compatibility during migration.
-import app from '../app';
+import express from 'express';
+import cors from 'cors';
+import AppRoutes from './server.routes.js';
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(AppRoutes);
 
 export default app;

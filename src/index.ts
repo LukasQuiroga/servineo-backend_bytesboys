@@ -1,4 +1,17 @@
-// src/index.ts
-// This file is deprecated. Use src/server.ts instead.
-// Kept for backwards compatibility during migration.
-import './server';
+import Server from './config/server.config.js';
+import _connect from './database.js';
+
+import { SERVER_PORT } from './config/env.config.js';
+
+async function startServer() {
+  try {
+    Server.listen(SERVER_PORT, () => {
+      console.info(`Server running on http://localhost:${SERVER_PORT}`);
+    });
+  } catch (error) {
+    console.error('Error starting server', error);
+  }
+}
+
+_connect();
+startServer();
