@@ -6,6 +6,7 @@ import newoffersRoutes from './api/routes/newOffers.routes';
 import fixerRoutes from './api/routes/fixer.routes';
 import activityRoutes from './api/routes/activities.routes';
 import jobsRoutes from './api/routes/jobs.routes';
+import notificationRoutes from './api/routes/notification.routes';
 
 import searchRoutes from './api/routes/search.routes';
 const app = express();
@@ -32,6 +33,7 @@ app.use('/api/fixers', fixerRoutes);
 app.use('/api', activityRoutes);
 app.use('/api', jobsRoutes);
 app.use('/api', searchRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.use((req, res) => {
   console.log('Not found:', req.method, req.originalUrl);
