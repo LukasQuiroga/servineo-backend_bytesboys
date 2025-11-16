@@ -2,6 +2,7 @@ import * as dotenv from 'dotenv';
 import db_connection from '../../database.js';
 import Appointment from '../../models/Appointment.js'
 import mongoose from 'mongoose';
+import { notificationService } from '../notifications/notification.service.js';
 
 dotenv.config();
 
@@ -72,23 +73,61 @@ export async function create_appointment(current_appointment: AppointmentParamet
         });
         console.log(exists);
         let appointment = null;
+        let savedAppointmentData = null; 
+        let isNewAppointment = false;
+
+
+
+
         if (!exists || (exists && exists.cancelled_fixer)) {
             appointment = new Appointment(current_appointment);
-            await appointment.save();
-            return { result: true, message_state: 'Cita creada correctamente.' };
+           // await appointment.save();
+
+            savedAppointmentData = await appointment.save(); // <-- Guardamos la cita
+            isNewAppointment = true; //// Indicamos que es una nueva cita
+
+            //return { result: true, message_state: 'Cita creada correctamente.' };
         } else if (exists && exists.schedule_state === 'cancelled') {
             const id_appointmente_exists = exists._id;
             current_appointment.schedule_state = 'booked';
             current_appointment.reprogram_reason = '';
-            await Appointment.findByIdAndUpdate(
-                id_appointmente_exists,
-                { $set: current_appointment },
-                { new: true }
+
+            savedAppointmentData = await Appointment.findByIdAndUpdate( // <-- Guardamos la cita actualizada
+                id_appointmente_exists,
+                { $set: current_appointment },
+                { new: true }
             );
-            return { result: true, message_state: 'Cita creada correctamente.' };
+                isNewAppointment = false; // Indicamos que no es una nueva cita
+           /// return { result: true, message_state: 'Cita creada correctamente.' };
         } else {
             return { result: true, message_state: 'No se puede crear la cita, la cita ya existe.' };
         }
+
+        if (savedAppointmentData) {
+            try {
+                // ¡Llamada simplificada!
+                await notificationService.sendAppointmentConfirmation(
+                    existingFixer,
+                    existingRequester,
+                    savedAppointmentData,
+                    isNewAppointment
+                );
+
+            } catch (notificationError) {
+                // Si la notificación falla, solo lo imprimimos en la consola del backend
+                // ¡No detenemos el proceso! La cita ya se guardó.
+                console.error("===================================");
+                console.error("🚨 ERROR AL ENVIAR NOTIFICACIÓN (la cita SÍ se guardó) 🚨");
+                console.error((notificationError as Error).message);
+                console.error("===================================");
+            }
+        }
+        // --- FIN DE LA LÓGICA DE NOTIFICACIÓN ---
+
+        // Devolvemos la respuesta original de tu compañero
+        return { result: true, message_state: 'Cita creada correctamente.' };   
+
+
     } catch (err) {
         throw new Error('Error creating appointment: ' + (err as Error).message);
     }
