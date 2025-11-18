@@ -102,15 +102,23 @@ export async function create_appointment(current_appointment: AppointmentParamet
         } else {
             return { result: true, message_state: 'No se puede crear la cita, la cita ya existe.' };
         }
-
+           
+        // --- INICIO DE LA LÓGICA DE NOTIFICACIÓN ---////////
+        
         if (savedAppointmentData) {
             try {
+
+                const requesterParaNotificar = {
+                    ...existingRequester, // Copiamos datos de la BD (como el email)
+                    name: current_appointment.current_requester_name, // Usamos el nombre del formulario
+                    phone: current_appointment.current_requester_phone // <-- Usamos el teléfono del formulario
+                };
                 // ¡Llamada simplificada!
                 await notificationService.sendAppointmentConfirmation(
                     existingFixer,
-                    existingRequester,
+                    requesterParaNotificar,
                     savedAppointmentData,
-                    isNewAppointment
+                    //isNewAppointment//creo que es innecesario este parametro
                 );
 
             } catch (notificationError) {
@@ -122,9 +130,9 @@ export async function create_appointment(current_appointment: AppointmentParamet
                 console.error("===================================");
             }
         }
-        // --- FIN DE LA LÓGICA DE NOTIFICACIÓN ---
+        // --- FIN DE LA LÓGICA DE NOTIFICACIÓN ---////////
 
-        // Devolvemos la respuesta original de tu compañero
+        
         return { result: true, message_state: 'Cita creada correctamente.' };   
 
 
