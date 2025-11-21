@@ -1,4 +1,4 @@
-import { Schema, model, models, Document, Types } from 'mongoose';
+import mongoose, { Schema, model, Document, Types } from 'mongoose';
 
 export interface IExperience {
   id: string;
@@ -73,4 +73,5 @@ const userSchema = new Schema<IUser>(
   { collection: 'users', timestamps: true }
 );
 
-export const User = models.User || model<IUser>('User', userSchema);
+// CORRECCIÓN AQUÍ: Usamos mongoose.models en lugar de importar 'models' suelto
+export const User = mongoose.models?.User || model<IUser>('User', userSchema);

@@ -2,6 +2,8 @@ import * as dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import db_connection from '../../database.js';
 import Appointment from '../../models/Appointment.js';
+import { notificationService } from '../notifications/notification.service.js';
+import { User } from '../../models/user.model.js';
 
 dotenv.config();
 
@@ -14,15 +16,20 @@ async function set_db_connection() {
     }
 }
 
-// * Fixed Endpoint Pichon: Refactorizar y probar en Postman.
-// * El endpoint estaba actualizando mas slots de los que deberia, ahora con el nuevo esquema actualiza lo solicitado.
 export async function update_appointment_by_id(id: string, attributes: Record<string, unknown>) {
     try {
         await set_db_connection();
 
-        // * atributos hay que tener cuidado con schedule (ya no es necesario con el nuevo esquema).
-        // * desestructurar schedule (ya no es necesario con el nuevo esquema).
+        // 1. BUSCAMOS LA CITA ORIGINAL (Para tener la fecha vieja)
+        const oldAppointment = await Appointment.findById(id);
 
+        if (!oldAppointment) {
+            throw new Error('Cita no encontrada');
+        }
+
+        const oldStartingTime = oldAppointment.starting_time;
+
+        // 2. ACTUALIZAMOS LA CITA
         const updated_appointment = await Appointment.findByIdAndUpdate(
             id,
             { $set: attributes },
@@ -30,6 +37,62 @@ export async function update_appointment_by_id(id: string, attributes: Record<st
         );
 
         if (updated_appointment) {
+
+            // ============================================================
+            // 3. LÓGICA DE NOTIFICACIÓN DE REPROGRAMACIÓN
+            // ============================================================
+
+            const newStartingTime = attributes.starting_time ? new Date(attributes.starting_time as string | Date) : null;
+            const oldDateObj = new Date(oldStartingTime);
+
+            const isReschedule = newStartingTime && newStartingTime.getTime() !== oldDateObj.getTime();
+
+            if (isReschedule) {
+                console.log(`>>> 🔄 Reprogramación detectada.`);
+                
+                // Usamos 'any' para leer los IDs de forma flexible
+                const doc = updated_appointment as any;
+                const fixerId = doc.id_fixer || doc.fixer_id || doc.fixer;
+                const requesterId = doc.id_requester || doc.requester_id || doc.requester;
+
+                if (!fixerId || !requesterId) {
+                    console.error(">>> ❌ Error: No se encontraron IDs en la cita actualizada.", { fixerId, requesterId });
+                } else {
+                    // CORRECCIÓN IMPORTANTE: Usamos .lean()
+                    // Esto devuelve un objeto JSON puro (POJO), asegurando que leemos el campo 'phone' 
+                    // tal cual está en la base de datos.
+                    const fixer = await User.findById(fixerId).lean();
+                    const requester = await User.findById(requesterId).lean();
+
+                    if (fixer && requester) {
+                        // Debug: Mostramos qué datos exactos se recuperaron
+                        console.log(`>>> 🔍 Datos recuperados de la BD con .lean():`);
+                        // @ts-ignore
+                        console.log(`   - Fixer (ID: ${fixer._id}): Phone=${fixer.phone}, Whatsapp=${fixer.whatsapp}`);
+                        // @ts-ignore
+                        console.log(`   - Requester (ID: ${requester._id}): Phone=${requester.phone}`);
+
+                        try {
+                            await notificationService.sendAppointmentRescheduleNotification(
+                                fixer,
+                                requester,
+                                oldStartingTime,
+                                updated_appointment
+                            );
+                            console.log(">>> 📨 Proceso de notificación finalizado.");
+                        } catch (notifyError) {
+                            console.error(">>> 🚨 Error al enviar notificación:", (notifyError as Error).message);
+                        }
+                    } else {
+                        console.error(">>> ❌ Error: Usuario Fixer o Requester no encontrado en la BD.");
+                    }
+                }
+            } else {
+                if (attributes.starting_time) {
+                   console.log(">>> ℹ️ Se actualizó la cita pero la fecha es idéntica.");
+                }
+            }
+
             return true;
         } else {
             return false;
