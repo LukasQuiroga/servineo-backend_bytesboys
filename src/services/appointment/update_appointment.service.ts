@@ -113,6 +113,28 @@ export async function fixer_cancell_appointment_by_id(appointment_id: string) {
         if (!result) {
             throw new Error("Appointment no econtrado");
         }
+        const client = await User.findById(result.id_requester);
+        
+        // Buscamos al Fixer (Profesional)
+        const fixer = await User.findById(result.id_fixer);
+
+        // 3. ENVIAR NOTIFICACIÓN (Si encontramos los usuarios)
+        if (client && fixer) {
+            console.log(`[Cancelación] Iniciando notificación para la cita ${appointment_id}`);
+            
+            // Llamamos al servicio de notificaciones sin 'await' bloqueante si prefieres rapidez,
+            // o con 'await' si quieres asegurar que se envíe antes de responder al front.
+            // Aquí uso await para asegurar que se intente enviar.
+            await notificationService.notifyAppointmentCancellation(
+                result.current_requester_name, // Nombre usado en la reserva
+                client.email,          // Email real del cliente (desde User)
+                result.current_requester_phone, // Teléfono de la reserva
+                fixer.name,            // Nombre del fixer (desde User)
+                result.selected_date // Fecha de la cita
+            );
+        } else {
+            console.warn(`[Warning] No se pudo notificar: Falta cliente (${!!client}) o fixer (${!!fixer}) en BD.`);
+        }
         return result;
     } catch (error) {
         throw new Error((error as Error).message);

@@ -274,6 +274,91 @@ ${newDateText}
           }
       }
   }
+
+  public async notifyAppointmentCancellation(
+    clientName: string,
+    clientEmail: string,
+    clientPhone: string,
+    fixerName: string,
+    appointmentDate: Date | string
+  ): Promise<boolean> {
+    // 1. Formatear la fecha (igual que antes)
+    const dateObj = new Date(appointmentDate);
+    const formatter = new Intl.DateTimeFormat('es-ES', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    let formattedDate = formatter.format(dateObj);
+    formattedDate = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
+
+    // 2. Construir el mensaje
+    const message = `Hola ${clientName} lamentamos informarte que el fixer ${fixerName} no podra atender tu solicitud de la fecha: ${formattedDate}. Disculpa las molestias`;
+    const emailSubject = 'Actualización sobre tu solicitud de servicio - Servineo';
+
+    console.log(`[Notification] Iniciando proceso de notificación para cancelación de cita...`);
+
+    // 3. Intentar enviar por WhatsApp (3 intentos)
+    const whatsappSuccess = await this.trySendWithRetries(
+      'WhatsApp',
+      () => this.whatsappProvider.send(clientPhone, message)
+    );
+
+    // 4. Intentar enviar por Email (3 intentos)
+    const emailSuccess = await this.trySendWithRetries(
+      'Email',
+      () => this.emailProvider.send(clientEmail, emailSubject, message)
+    );
+
+    // 5. Evaluar resultados
+    if (!whatsappSuccess) {
+      console.warn(`[Alerta] El medio WhatsApp se marcó como FALLIDO para ${clientPhone} tras 3 intentos.`);
+    }
+
+    if (!emailSuccess) {
+      console.warn(`[Alerta] El medio Email se marcó como FALLIDO para ${clientEmail} tras 3 intentos.`);
+    }
+
+    // 6. Verificar Failover (Ambos fallaron)
+    if (!whatsappSuccess && !emailSuccess) {
+      console.error('[FAILOVER CRÍTICO] Ambos medios de notificación fallaron. Se requiere intervención manual.');
+      
+      return false; 
+    }
+
+    console.log('[Notification] Proceso finalizado. Al menos un medio fue exitoso.');
+    return true;
+  }
+
+  /**
+   * Método auxiliar para reintentar una acción hasta 3 veces.
+   */
+  private async trySendWithRetries(channelName: string, action: () => Promise<any>): Promise<boolean> {
+    const MAX_ATTEMPTS = 3;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await action();
+        console.log(`[${channelName}] Envío exitoso en el intento ${attempt}.`);
+        return true; // Éxito
+      } catch (error) {
+        console.error(`[${channelName}] Error en intento ${attempt}/${MAX_ATTEMPTS}:`, error);
+        
+        if (attempt < MAX_ATTEMPTS) {
+          // Opcional: Esperar un poco antes de reintentar (backoff simple de 1 segundo)
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+    
+    return false; // Falló después de todos los intentos
+  }
+
+
 }
 
 export const notificationService = new NotificationService();
