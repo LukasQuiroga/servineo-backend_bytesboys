@@ -58,20 +58,10 @@ export async function update_appointment_by_id(id: string, attributes: Record<st
                 if (!fixerId || !requesterId) {
                     console.error(">>> ❌ Error: No se encontraron IDs en la cita actualizada.", { fixerId, requesterId });
                 } else {
-                    // CORRECCIÓN IMPORTANTE: Usamos .lean()
-                    // Esto devuelve un objeto JSON puro (POJO), asegurando que leemos el campo 'phone' 
-                    // tal cual está en la base de datos.
                     const fixer = await User.findById(fixerId).lean();
                     const requester = await User.findById(requesterId).lean();
 
                     if (fixer && requester) {
-                        // Debug: Mostramos qué datos exactos se recuperaron
-                        console.log(`>>> 🔍 Datos recuperados de la BD con .lean():`);
-                        // @ts-ignore
-                        console.log(`   - Fixer (ID: ${fixer._id}): Phone=${fixer.phone}, Whatsapp=${fixer.whatsapp}`);
-                        // @ts-ignore
-                        console.log(`   - Requester (ID: ${requester._id}): Phone=${requester.phone}`);
-
                         try {
                             await notificationService.sendAppointmentRescheduleNotification(
                                 fixer,
@@ -89,7 +79,7 @@ export async function update_appointment_by_id(id: string, attributes: Record<st
                 }
             } else {
                 if (attributes.starting_time) {
-                   console.log(">>> ℹ️ Se actualizó la cita pero la fecha es idéntica.");
+                    console.log(">>> ℹ️ Se actualizó la cita pero la fecha es idéntica.");
                 }
             }
 
@@ -105,36 +95,97 @@ export async function update_appointment_by_id(id: string, attributes: Record<st
 export async function fixer_cancell_appointment_by_id(appointment_id: string) {
     try {
         await set_db_connection();
+
+        // 1. VERIFICAR IDEMPOTENCIA
+        // Antes de cancelar, verificamos si ya estaba cancelada para no duplicar eventos.
+        const existing = await Appointment.findById(appointment_id);
+        if (!existing) {
+            throw new Error("Appointment no encontrado");
+        }
+        
+        if (existing.cancelled_fixer) {
+            console.warn(`[Info] La cita ${appointment_id} ya estaba cancelada por el fixer. Omitiendo proceso.`);
+            return existing;
+        }
+
+        // 2. EJECUTAR CANCELACIÓN
         const result = await Appointment.findByIdAndUpdate(appointment_id, {
             cancelled_fixer: true
         }, {
             new: true
         });
+
         if (!result) {
-            throw new Error("Appointment no econtrado");
+            throw new Error("Error actualizando la cita");
         }
-        const client = await User.findById(result.id_requester);
         
-        // Buscamos al Fixer (Profesional)
+        // Obtenemos datos de usuarios
+        const client = await User.findById(result.id_requester);
         const fixer = await User.findById(result.id_fixer);
 
-        // 3. ENVIAR NOTIFICACIÓN (Si encontramos los usuarios)
+        // 3. ENVIAR NOTIFICACIÓN AL CLIENTE (Aviso normal)
         if (client && fixer) {
-            console.log(`[Cancelación] Iniciando notificación para la cita ${appointment_id}`);
+            console.log(`[Cancelación] Iniciando notificación al cliente para la cita ${appointment_id}`);
             
-            // Llamamos al servicio de notificaciones sin 'await' bloqueante si prefieres rapidez,
-            // o con 'await' si quieres asegurar que se envíe antes de responder al front.
-            // Aquí uso await para asegurar que se intente enviar.
             await notificationService.notifyAppointmentCancellation(
-                result.current_requester_name, // Nombre usado en la reserva
-                client.email,          // Email real del cliente (desde User)
-                result.current_requester_phone, // Teléfono de la reserva
-                fixer.name,            // Nombre del fixer (desde User)
-                result.selected_date // Fecha de la cita
+                result.current_requester_name, 
+                client.email,           
+                result.current_requester_phone, 
+                fixer.name,             
+                result.selected_date 
             );
         } else {
             console.warn(`[Warning] No se pudo notificar: Falta cliente (${!!client}) o fixer (${!!fixer}) en BD.`);
         }
+
+        // ============================================================
+        // 4. LÓGICA DE ALERTA DE MÚLTIPLES CANCELACIONES (HU)
+        // ============================================================
+        if (fixer) {
+            const CANCELLATION_THRESHOLD = 3; 
+
+            // Buscamos las últimas citas del fixer para ver la racha
+            // Ordenamos por 'updatedAt' descendente para ver lo más reciente
+            const recentAppointments = await Appointment.find({ 
+                id_fixer: result.id_fixer 
+            })
+            .sort({ updatedAt: -1 }) 
+            .limit(20); 
+
+            let consecutiveCancellations = 0;
+
+            // Contamos cuántas seguidas están canceladas por el fixer
+            for (const app of recentAppointments) {
+                if (app.cancelled_fixer) {
+                    consecutiveCancellations++;
+                } else {
+                    // Si encontramos una NO cancelada (booked/completed), se rompe la racha
+                    break;
+                }
+            }
+
+            console.log(`[Alert System] Fixer ${fixer.name} tiene racha de ${consecutiveCancellations} cancelaciones.`);
+
+            // Si supera el umbral, enviamos alerta
+            if (consecutiveCancellations >= CANCELLATION_THRESHOLD) {
+                // @ts-ignore: Acceso seguro a propiedad whatsapp si phone es nulo
+                const fixerPhone = fixer.phone || fixer.whatsapp;
+                
+                // Si supera el umbral por 2 más (ej: 5 cancelaciones), escalamos
+                const isEscalated = consecutiveCancellations >= (CANCELLATION_THRESHOLD + 2);
+
+                await notificationService.notifyFixerExcessiveCancellations(
+                    fixer._id,
+                    fixer.name,
+                    fixer.email,
+                    fixerPhone,
+                    consecutiveCancellations,
+                    new Date(), // Fecha de la última cancelación (ahora)
+                    isEscalated
+                );
+            }
+        }
+
         return result;
     } catch (error) {
         throw new Error((error as Error).message);

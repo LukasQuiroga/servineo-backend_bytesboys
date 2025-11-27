@@ -2,6 +2,10 @@
 
 import { EmailProvider } from './email.provider.js';
 import { WhatsAppProvider } from './whatsapp.provider.js';
+// Nuevos imports necesarios para la HU de Cancelaciones
+import Notification from '../../modules/notifications/notification.model.js';
+import { ENV } from '../../config/env.config.js';
+import { Types } from 'mongoose';
 
 // funcion pra extraer fecha y hora en formato localizado
 function formatLocalizedDateTime(isoString: string | Date): string {
@@ -332,6 +336,104 @@ ${newDateText}
 
     console.log('[Notification] Proceso finalizado. Al menos un medio fue exitoso.');
     return true;
+  }
+
+  /**
+   * 4. Alerta de Múltiples Cancelaciones (HU)
+   */
+  public async notifyFixerExcessiveCancellations(
+    fixerId: string | Types.ObjectId,
+    fixerName: string,
+    fixerEmail: string,
+    fixerPhone: string,
+    totalCancellations: number,
+    lastCancellationDate: Date,
+    isEscalated: boolean = false
+  ): Promise<void> {
+
+    console.log(`[Notification] ⚠️ Procesando alerta de MULTIPLES CANCELACIONES para ${fixerName}. Total: ${totalCancellations}. Escalado: ${isEscalated}`);
+
+    // Formatear fecha al estilo solicitado: "02/11/2025 18:05"
+    const dateFormatted = new Date(lastCancellationDate).toLocaleString('es-BO', {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+    });
+
+    // Definir asunto y cuerpo según si es advertencia o escalamiento (HU: "Entonces debe recibir una nueva notificación actualizada")
+    let subject = isEscalated 
+        ? '🚨 AVISO URGENTE: Restricción por cancelaciones excesivas' 
+        : '⚠️ ALERTA: Múltiples cancelaciones detectadas';
+
+    let escalationText = isEscalated 
+        ? '\n\n*NOTA:* Hemos notificado al coordinador debido a la recurrencia de este comportamiento.' 
+        : '';
+
+    const messageBody = 
+`ALERTA DE MULTIPLES CANCELACIONES
+
+Hola *${fixerName}*
+
+Has alcanzado el límite de *${totalCancellations}* cancelaciones consecutivas.
+
+Total de cancelaciones recientes: *${totalCancellations}*.
+Ultima cancelación: *${dateFormatted}*.
+
+Evitar cancelaciones innecesarias para no recibir restricciones.${escalationText}`;
+
+    // A. Envío por canales (Prioridad: WhatsApp -> Failover: Email)
+    let sendStatus: 'SUCCESS' | 'FAILED' = 'FAILED';
+    let usedChannel: 'whatsapp' | 'email' = 'whatsapp';
+    let errorDetails: string | null = null;
+
+    try {
+        let sent = false;
+        
+        // 1. Intentar WhatsApp (Canal preferido)
+        if (fixerPhone) {
+            sent = await this.trySendWithRetries('WhatsApp', () => this.whatsappProvider.send(fixerPhone, messageBody));
+        }
+
+        // 2. Failover a Email si WhatsApp falla o no existe
+        if (!sent && fixerEmail) {
+            console.log('[Failover] Usando Email para alerta de cancelación.');
+            usedChannel = 'email';
+            const emailHtml = messageBody.replace(/\*/g, '').replace(/\n/g, '<br>');
+            sent = await this.trySendWithRetries('Email', () => this.emailProvider.send(fixerEmail, subject, emailHtml));
+        }
+
+        if (sent) sendStatus = 'SUCCESS';
+
+    } catch (err) {
+        errorDetails = (err as Error).message;
+        console.error('Error general enviando alerta:', err);
+    }
+
+    // B. PERSISTENCIA: Guardar en BD para el Historial (Cumple HU: "Dado que el fixer consulta su historial...")
+    try {
+        await Notification.create({
+            users_id: fixerId,
+            recipient_phone: fixerPhone || '',
+            notification_type: usedChannel,
+            message_content: messageBody,
+            send_status: sendStatus,
+            leido: false,
+            tipo: 'ALERT_CANCELLATION', 
+            estado: isEscalated ? 'HIGH_PRIORITY' : 'WARNING', 
+            error_details: errorDetails
+        });
+        console.log(`[Notification] Historial actualizado para ${fixerName} (Estado: ${sendStatus})`);
+    } catch (dbError) {
+        console.error('Error guardando notificación en BD:', dbError);
+    }
+
+    // C. ESCALAMIENTO: Notificar al coordinador (Cumple HU: "escalar al coordinador correspondiente")
+    if (isEscalated) {
+        const adminEmail = ENV.SMTP_USER || 'admin@servineo.com'; 
+        const adminMsg = `El fixer ${fixerName} (${fixerEmail}) ha acumulado ${totalCancellations} cancelaciones consecutivas. Se requiere revisión manual.`;
+        
+        // Enviamos "fire and forget"
+        this.emailProvider.send(adminEmail, `[COORDINADOR] Revisión de Fixer: ${fixerName}`, adminMsg)
+            .catch(e => console.error('Error notificando admin:', e));
+    }
   }
 
   /**
