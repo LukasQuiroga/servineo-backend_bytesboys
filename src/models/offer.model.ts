@@ -1,4 +1,4 @@
-import { Schema, model, models } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
 const offerSchema = new Schema(
   {
@@ -66,6 +66,6 @@ offerSchema.index({ city: 1, category: 1 });
 offerSchema.index({ fixerName: 1, city: 1 });
 
 // Evitar recompilación del modelo
-const OfferModel = models.Offer || model('Offer', offerSchema, 'offers');
+const OfferModel = mongoose.models.Offer || mongoose.model('Offer', offerSchema, 'offers');
 
 export const Offer = OfferModel;
