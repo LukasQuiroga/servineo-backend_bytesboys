@@ -4,6 +4,7 @@ dotenv.config({ path: '.env' });
 import express from 'express';
 import cors from 'cors';
 import { connectDatabase } from './config/db.config';
+import mongoose from 'mongoose';
 
 import jobOfertRoutes from './api/routes/jobOfert.routes';
 import newoffersRoutes from './api/routes/newOffers.routes';
