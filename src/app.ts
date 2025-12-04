@@ -75,6 +75,8 @@ import codigos2faRouter from './api/routes/userManagement/codigos2fa.routes';
 import twoFaRouter from './api/routes/userManagement/2fa.routes';
 //nuevas rutas signup
 import signUpRoutes from './api/routes/userManagement/signUp.routes';
+//rutas notificaciones
+import notificationRoutes from './modules/notifications/notification.routes';
 
 const app = express();
 
@@ -138,6 +140,8 @@ app.use('/api/user', routerUser);
 //ruta oficial para ofertas de trabajo no borrar
 app.use('/api/job-offers', jobOfficial);
 app.use('/api/certifications', certificationRoutes);
+app.use('/api/signUp', signUpRoutes);
+app.use('/api/notifications', notificationRoutes);
 export const registerRoutes = (app: any) => {
   app.use('/devices', deviceRouter);
 };
